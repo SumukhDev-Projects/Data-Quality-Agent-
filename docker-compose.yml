@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: dqa_meta_db
+    environment:
+      POSTGRES_USER: dqa
+      POSTGRES_PASSWORD: dqa_secret
+      POSTGRES_DB: dqa_metadata
+    volumes:
+      - dqa_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # 5433 on host so it doesn't conflict with your existing Postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dqa -d dqa_metadata"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Sample target DB — this is what the agent ANALYZES
+  # In production you'd point the agent at your real database instead
+  sample_db:
+    image: postgres:15-alpine
+    container_name: dqa_sample_db
+    environment:
+      POSTGRES_USER: sample
+      POSTGRES_PASSWORD: sample_secret
+      POSTGRES_DB: ecommerce
+    volumes:
+      - dqa_sample_data:/var/lib/postgresql/data
+      - ./sample_data/seed.sql:/docker-entrypoint-initdb.d/seed.sql
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sample -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dqa_backend
+    environment:
+      DATABASE_URL: postgresql://dqa:dqa_secret@db:5432/dqa_metadata
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dqa_frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+
+volumes:
+  dqa_postgres_data:
+  dqa_sample_data:
